@@ -91,9 +91,9 @@ Sync to container: `mkdir -p data/env && cp .env data/env/env`
 
 ### Webhook server
 
-The Chat SDK bridge automatically starts a shared webhook server on port 3000 (configurable via `WEBHOOK_PORT` env var). The server handles `/webhook/slack` for Slack and other webhook-based adapters. This port must be publicly reachable from the internet for Slack to deliver events.
+The Chat SDK bridge automatically starts a shared webhook server on port 3000 (configurable via `WEBHOOK_PORT`). By default it binds to `127.0.0.1` so the port is not exposed to the LAN; override with `WEBHOOK_BIND=0.0.0.0` only if you genuinely need direct external reach. The server handles `/webhook/slack` for Slack and other webhook-based adapters, and the public URL must ultimately reach this port for Slack to deliver events.
 
-If running locally, discuss options for exposing the server — e.g. ngrok (`ngrok http 3000`), Cloudflare Tunnel, or a reverse proxy on a VPS. The resulting public URL becomes the base for `https://your-domain/webhook/slack`.
+If running locally, discuss options for exposing the server — e.g. ngrok (`ngrok http 3000`), Cloudflare Tunnel, or a reverse proxy on a VPS. These all connect from the same host to `127.0.0.1:3000` and work with the default bind unchanged. The resulting public URL becomes the base for `https://your-domain/webhook/slack`.
 
 ## Next Steps
 

@@ -294,9 +294,10 @@ function buildMounts(
     mounts.push({ hostPath: sharedClaudeMd, containerPath: '/app/CLAUDE.md', readonly: true });
   }
 
-  // Per-group .claude-shared at /home/node/.claude (Claude state, settings,
-  // skill symlinks)
-  mounts.push({ hostPath: claudeDir, containerPath: '/home/node/.claude', readonly: false });
+  // Per-group .claude-shared at /agent-home/.claude (Claude state, settings,
+  // skill symlinks). Lives under the agent's HOME (/agent-home) — see
+  // Dockerfile for why /home/node is no longer used.
+  mounts.push({ hostPath: claudeDir, containerPath: '/agent-home/.claude', readonly: false });
 
   // Shared agent-runner source — read-only, same code for all groups.
   const agentRunnerSrc = path.join(projectRoot, 'container', 'agent-runner', 'src');
@@ -453,13 +454,18 @@ async function buildContainerArgs(
   // Host gateway
   args.push(...hostGatewayArgs());
 
-  // User mapping
+  // User mapping. Always set HOME=/agent-home: the image's USER directive maps
+  // to the `node` user (uid 1000) whose default HOME is /home/node, but we
+  // route all agent-process writes to /agent-home so the node-owned dotfiles
+  // in /home/node stay untouchable. When the host uid is not 1000, --user
+  // also overrides the image USER so the running process matches the host
+  // owner of the bind-mounted session dirs.
   const hostUid = process.getuid?.();
   const hostGid = process.getgid?.();
   if (hostUid != null && hostUid !== 0 && hostUid !== 1000) {
     args.push('--user', `${hostUid}:${hostGid}`);
-    args.push('-e', 'HOME=/home/node');
   }
+  args.push('-e', 'HOME=/agent-home');
 
   // Volume mounts
   for (const mount of mounts) {

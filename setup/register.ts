@@ -21,6 +21,7 @@ import { isValidGroupFolder } from '../src/group-folder.js';
 import { initGroupFilesystem } from '../src/group-init.js';
 import { log } from '../src/log.js';
 import { resolveSession, writeSessionMessage } from '../src/session-manager.js';
+import { writeSecretEnvFile } from './env-utils.js';
 import { emitStatus } from './status.js';
 
 interface RegisterArgs {
@@ -234,9 +235,9 @@ export async function run(args: string[]): Promise<void> {
       } else {
         envContent += `\nASSISTANT_NAME="${parsed.assistantName}"`;
       }
-      fs.writeFileSync(envFile, envContent);
+      writeSecretEnvFile(envFile, envContent);
     } else {
-      fs.writeFileSync(envFile, `ASSISTANT_NAME="${parsed.assistantName}"\n`);
+      writeSecretEnvFile(envFile, `ASSISTANT_NAME="${parsed.assistantName}"\n`);
     }
     log.info('Set ASSISTANT_NAME in .env');
     nameUpdated = true;

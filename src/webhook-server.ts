@@ -14,6 +14,14 @@ import type { Chat } from 'chat';
 import { log } from './log.js';
 
 const DEFAULT_PORT = 3000;
+/**
+ * Default to loopback so the webhook port is not exposed to the local
+ * network. Public reach (self-hosted webhooks without a tunnel) is opt-in
+ * via WEBHOOK_BIND=0.0.0.0. Tunnels like Cloudflare or ngrok work
+ * unchanged because the tunnel agent runs on the same host and connects
+ * to 127.0.0.1.
+ */
+const DEFAULT_BIND = '127.0.0.1';
 
 interface WebhookEntry {
   chat: Chat;
@@ -31,7 +39,11 @@ async function toWebRequest(req: http.IncomingMessage): Promise<Request> {
   }
   const body = Buffer.concat(chunks);
 
-  const host = req.headers.host || 'localhost';
+  // The Host header is attacker-controllable when WEBHOOK_BIND=0.0.0.0
+  // exposes us beyond loopback. Validate it's a plain "host[:port]" — no
+  // path injection, no embedded URLs — before splicing into the URL.
+  const rawHost = req.headers.host || 'localhost';
+  const host = /^[A-Za-z0-9._-]+(?::[0-9]{1,5})?$/.test(rawHost) ? rawHost : 'localhost';
   const url = `http://${host}${req.url}`;
 
   const headers: Record<string, string> = {};
@@ -76,10 +88,23 @@ export function registerWebhookAdapter(chat: Chat, adapterName: string): void {
   log.info('Webhook adapter registered', { adapter: adapterName, path: `/webhook/${adapterName}` });
 }
 
+/**
+ * Resolve listen config from env. Exported for tests.
+ * - WEBHOOK_PORT: numeric port, defaults to 3000.
+ * - WEBHOOK_BIND: bind address, defaults to 127.0.0.1 (loopback only).
+ *   Set to '0.0.0.0' to opt into LAN/external exposure.
+ */
+export function resolveListenConfig(env: NodeJS.ProcessEnv = process.env): { port: number; bind: string } {
+  return {
+    port: parseInt(env.WEBHOOK_PORT || String(DEFAULT_PORT), 10),
+    bind: env.WEBHOOK_BIND || DEFAULT_BIND,
+  };
+}
+
 function ensureServer(): void {
   if (server) return;
 
-  const port = parseInt(process.env.WEBHOOK_PORT || String(DEFAULT_PORT), 10);
+  const { port, bind } = resolveListenConfig();
 
   server = http.createServer(async (req, res) => {
     const url = req.url || '/';
@@ -118,8 +143,8 @@ function ensureServer(): void {
     }
   });
 
-  server.listen(port, '0.0.0.0', () => {
-    log.info('Webhook server started', { port, adapters: [...routes.keys()] });
+  server.listen(port, bind, () => {
+    log.info('Webhook server started', { port, bind, adapters: [...routes.keys()] });
   });
 }
 

@@ -32,6 +32,7 @@ import * as p from '@clack/prompts';
 import k from 'kleur';
 
 import * as setupLog from '../logs.js';
+import { copySecretEnvFile, writeSecretEnvFile } from '../env-utils.js';
 import { getLaunchdLabel, getSystemdUnit } from '../../src/install-slug.js';
 import {
   type Block,
@@ -290,11 +291,11 @@ function writeSignalAccount(account: string): void {
     if (contents.length > 0 && !contents.endsWith('\n')) contents += '\n';
     contents += `SIGNAL_ACCOUNT=${account}\n`;
   }
-  fs.writeFileSync(envPath, contents);
+  writeSecretEnvFile(envPath, contents);
 
   const containerEnvDir = path.join(process.cwd(), 'data', 'env');
   fs.mkdirSync(containerEnvDir, { recursive: true });
-  fs.copyFileSync(envPath, path.join(containerEnvDir, 'env'));
+  copySecretEnvFile(envPath, path.join(containerEnvDir, 'env'));
 
   setupLog.userInput('signal_account', account);
 }

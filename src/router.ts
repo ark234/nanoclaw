@@ -336,6 +336,16 @@ export async function routeInbound(event: InboundEvent): Promise<void> {
  *                      a thread has engaged us once, follow-ups arrive
  *                      with no mention and should still fire.
  */
+// Cache of (agentGroupId, pattern) we've already warned about, so a busted
+// engage_pattern doesn't flood the log on every message.
+const badEngagePatternsLogged = new Set<string>();
+function warnBadEngagePattern(agentGroupId: string, pattern: string, err: unknown): void {
+  const key = `${agentGroupId}:${pattern}`;
+  if (badEngagePatternsLogged.has(key)) return;
+  badEngagePatternsLogged.add(key);
+  log.warn('Invalid engage_pattern regex; failing open', { agentGroupId, pattern, err });
+}
+
 function evaluateEngage(
   agent: MessagingGroupAgent,
   text: string,
@@ -349,8 +359,11 @@ function evaluateEngage(
       if (pat === '.') return true;
       try {
         return new RegExp(pat).test(text);
-      } catch {
+      } catch (err) {
         // Bad regex: fail open so admin sees the agent responding + can fix.
+        // Log once per (agent, pattern) so the admin has a breadcrumb when
+        // wondering why the agent is replying to *every* message.
+        warnBadEngagePattern(agent.agent_group_id, pat, err);
         return true;
       }
     }
@@ -422,8 +435,8 @@ async function deliverToAgent(
     }
   }
 
-  writeSessionMessage(session.agent_group_id, session.id, {
-    id: messageIdForAgent(event.message.id, agent.agent_group_id),
+  const inserted = writeSessionMessage(session.agent_group_id, session.id, {
+    id: messageIdForAgent(event.message.id, agent.agent_group_id, event.message.timestamp),
     kind: event.message.kind,
     timestamp: event.message.timestamp,
     platformId: deliveryAddr.platformId,
@@ -432,6 +445,22 @@ async function deliverToAgent(
     content: event.message.content,
     trigger: wake ? 1 : 0,
   });
+
+  if (!inserted) {
+    // Surfaced at warn (not debug) so chat-adapter redelivery storms or
+    // colliding ids show up in the default INFO-level log. The drop itself
+    // is benign (the message was already in messages_in from a prior call),
+    // but if a user perceives "Smith ignored me" this is the line to grep
+    // for. Includes the platform message id so we can correlate with the
+    // adapter's getUpdates retries.
+    log.warn('Message dropped — duplicate id (chat-adapter redelivery)', {
+      sessionId: session.id,
+      agentGroup: agent.agent_group_id,
+      messageId: event.message.id,
+      channelType: event.channelType,
+    });
+    return;
+  }
 
   log.info('Message routed', {
     sessionId: session.id,
@@ -456,12 +485,27 @@ async function deliverToAgent(
 }
 
 /**
- * When fanning out, the same inbound message lands in multiple per-agent
- * session DBs. messages_in.id is PRIMARY KEY, so reuse of the raw id would
- * collide across sessions (or, more subtly, within one session if re-routed
- * after a retry). Namespace by agent_group_id to keep ids unique per session.
+ * Build the messages_in.id for a routed inbound. Two collision sources:
+ *
+ *   1. Cross-session fan-out: the same `event.message.id` is delivered to
+ *      every agent wired to the messaging group, so the agent_group_id
+ *      namespace keeps ids unique per session.
+ *
+ *   2. Cross-time platform-id reuse: chat platforms can re-issue the same
+ *      `message.id` across counter resets (Telegram in particular resets the
+ *      per-chat message_id on chat-history-clear, bot kick/re-add, etc.).
+ *      Without timestamping, today's message colliding with a 5-day-old id
+ *      gets `INSERT OR IGNORE`-dropped and the user sees Smith go silent.
+ *      `event.message.timestamp` is set by the platform at original send
+ *      time, so a true redelivery (same getUpdates retry) keeps the same
+ *      timestamp and still dedupes correctly.
  */
-function messageIdForAgent(baseId: string | undefined, agentGroupId: string): string {
+function messageIdForAgent(
+  baseId: string | undefined,
+  agentGroupId: string,
+  timestamp: string | undefined,
+): string {
   const id = baseId && baseId.length > 0 ? baseId : generateId();
-  return `${id}:${agentGroupId}`;
+  const ts = timestamp ?? '';
+  return `${id}:${ts}:${agentGroupId}`;
 }

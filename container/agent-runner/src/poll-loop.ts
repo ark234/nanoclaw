@@ -230,6 +230,59 @@ function formatMessagesWithCommands(messages: MessageInRow[], nativeSlashCommand
   return parts.join('\n\n');
 }
 
+/**
+ * Filter pending messages, run pre-task gating, and push survivors into an
+ * active query. Mirrors the main loop's gating so scheduled tasks with
+ * `wakeAgent: false` scripts don't bypass it just because a query is open.
+ *
+ * Exported so tests can drive it directly without orchestrating a full
+ * setInterval/processQuery loop.
+ */
+export async function pumpFollowUps(query: AgentQuery): Promise<{ pushed: number; gated: string[] }> {
+  // Skip system messages (MCP tool responses) and /clear (needs fresh query).
+  // Thread routing is the router's concern — if a message landed in this
+  // session, the agent should see it. Per-thread sessions already isolate
+  // threads into separate containers; shared sessions intentionally merge
+  // everything. Filtering on thread_id here caused deadlocks when the
+  // initial batch and follow-ups had mismatched thread_ids (e.g. a
+  // host-generated welcome trigger with null thread vs a Discord DM reply).
+  const newMessages = getPendingMessages().filter((m) => {
+    if (m.kind === 'system') return false;
+    if ((m.kind === 'chat' || m.kind === 'chat-sdk') && isClearCommand(m)) return false;
+    return true;
+  });
+  if (newMessages.length === 0) return { pushed: 0, gated: [] };
+
+  const newIds = newMessages.map((m) => m.id);
+  markProcessing(newIds);
+
+  // Same pre-task gate as the main loop. Without this, scheduled tasks
+  // injected while a query is active bypass `wakeAgent: false` and end up
+  // pushed straight into Claude's stream (one observed failure mode: an owl
+  // alert task firing every minute during an active conversation).
+  let keep = newMessages;
+  let skipped: string[] = [];
+  // MODULE-HOOK:scheduling-pre-task-followup:start
+  const { applyPreTaskScripts } = await import('./scheduling/task-script.js');
+  const preTask = await applyPreTaskScripts(newMessages);
+  keep = preTask.keep;
+  skipped = preTask.skipped;
+  if (skipped.length > 0) {
+    markCompleted(skipped);
+    log(`Pre-task script skipped ${skipped.length} task(s) during active query: ${skipped.join(', ')}`);
+  }
+  // MODULE-HOOK:scheduling-pre-task-followup:end
+
+  if (keep.length === 0) return { pushed: 0, gated: skipped };
+
+  const prompt = formatMessages(keep);
+  log(`Pushing ${keep.length} follow-up message(s) into active query`);
+  query.push(prompt);
+
+  markCompleted(keep.map((m) => m.id));
+  return { pushed: keep.length, gated: skipped };
+}
+
 interface QueryResult {
   continuation?: string;
 }
@@ -248,31 +301,22 @@ async function processQuery(
   // Stream liveness is decided host-side via the heartbeat file + processing
   // claim age (see src/host-sweep.ts); if something is truly stuck, the host
   // will kill the container and messages get reset to pending.
+  //
+  // Reentrancy guard: pre-task scripts are async (bash spawn), so the setInterval
+  // can fire again before the previous run completes. Without this flag two
+  // concurrent invocations would double-mark and double-push.
+  let pushInProgress = false;
   const pollHandle = setInterval(() => {
-    if (done) return;
-
-    // Skip system messages (MCP tool responses) and /clear (needs fresh query).
-    // Thread routing is the router's concern — if a message landed in this
-    // session, the agent should see it. Per-thread sessions already isolate
-    // threads into separate containers; shared sessions intentionally merge
-    // everything. Filtering on thread_id here caused deadlocks when the
-    // initial batch and follow-ups had mismatched thread_ids (e.g. a
-    // host-generated welcome trigger with null thread vs a Discord DM reply).
-    const newMessages = getPendingMessages().filter((m) => {
-      if (m.kind === 'system') return false;
-      if ((m.kind === 'chat' || m.kind === 'chat-sdk') && isClearCommand(m)) return false;
-      return true;
-    });
-    if (newMessages.length > 0) {
-      const newIds = newMessages.map((m) => m.id);
-      markProcessing(newIds);
-
-      const prompt = formatMessages(newMessages);
-      log(`Pushing ${newMessages.length} follow-up message(s) into active query`);
-      query.push(prompt);
-
-      markCompleted(newIds);
-    }
+    if (done || pushInProgress) return;
+    pushInProgress = true;
+    pumpFollowUps(query)
+      .catch((err) => {
+        const errMsg = err instanceof Error ? err.message : String(err);
+        log(`Follow-up push error: ${errMsg}`);
+      })
+      .finally(() => {
+        pushInProgress = false;
+      });
   }, ACTIVE_POLL_INTERVAL_MS);
 
   try {

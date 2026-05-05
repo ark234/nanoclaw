@@ -204,13 +204,14 @@ export function writeSessionMessage(
      */
     trigger?: 0 | 1;
   },
-): void {
+): boolean {
   // Extract base64 attachment data, save to inbox, replace with file paths
   const content = extractAttachmentFiles(agentGroupId, sessionId, message.id, message.content);
 
   const db = openInboundDb(agentGroupId, sessionId);
+  let inserted: boolean;
   try {
-    insertMessage(db, {
+    inserted = insertMessage(db, {
       id: message.id,
       kind: message.kind,
       timestamp: message.timestamp,
@@ -226,7 +227,10 @@ export function writeSessionMessage(
     db.close();
   }
 
-  updateSession(sessionId, { last_active: new Date().toISOString() });
+  if (inserted) {
+    updateSession(sessionId, { last_active: new Date().toISOString() });
+  }
+  return inserted;
 }
 
 /**
@@ -254,13 +258,18 @@ function extractAttachmentFiles(
     if (typeof att.data === 'string') {
       const inboxDir = path.join(sessionDir(agentGroupId, sessionId), 'inbox', messageId);
       fs.mkdirSync(inboxDir, { recursive: true });
-      const filename = (att.name as string) || `attachment-${Date.now()}`;
-      const filePath = path.join(inboxDir, filename);
+      // Strip path components from attacker-controlled name. path.basename
+      // collapses any "../../../etc/passwd" to just "passwd"; we also cap
+      // length and replace anything that isn't a sane filename char so the
+      // upstream Chat SDK can't smuggle weirdness through.
+      const rawName = (att.name as string) || `attachment-${Date.now()}`;
+      const safeName = path.basename(rawName).replace(/[^A-Za-z0-9._-]/g, '_').slice(0, 200) || `attachment-${Date.now()}`;
+      const filePath = path.join(inboxDir, safeName);
       fs.writeFileSync(filePath, Buffer.from(att.data as string, 'base64'));
-      att.localPath = `inbox/${messageId}/${filename}`;
+      att.localPath = `inbox/${messageId}/${safeName}`;
       delete att.data;
       changed = true;
-      log.debug('Saved attachment to inbox', { messageId, filename, size: att.size });
+      log.debug('Saved attachment to inbox', { messageId, filename: safeName, size: att.size });
     }
   }
 
@@ -283,6 +292,15 @@ export function openOutboundDb(agentGroupId: string, sessionId: string): Databas
  * Write a message directly to a session's outbound DB so the host delivery
  * loop picks it up. Used by the command gate to send denial responses
  * without waking a container.
+ *
+ * NOTE: this violates the "one writer per file" invariant at the top of
+ * this file — the host is writing to a DB the container also writes to. We
+ * accept the violation here because (a) DELETE-mode journal-unlink is the
+ * race window, and we open-write-close in one atomic step, the same shape
+ * the container uses; (b) the seq is bumped by +2 so a concurrent write
+ * from the container can take the +1 slot without colliding on the PK.
+ * If you ever see "messages_out malformed" in production, this is the
+ * first place to look.
  */
 export function writeOutboundDirect(
   agentGroupId: string,

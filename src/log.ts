@@ -22,10 +22,27 @@ function formatErr(err: unknown): string {
   return JSON.stringify(err);
 }
 
+// Strip values whose key looks secret-y so a stray `log.info('...', { secret })`
+// doesn't end up in the disk log. Walks nested objects via JSON.stringify's
+// replacer so {meta:{token:'abc'}} also gets redacted.
+const REDACT_KEY = /^(secret|token|password|api[_-]?key|authorization|bearer|cookie|set-cookie)$/i;
+function redactReplacer(key: string, value: unknown): unknown {
+  if (REDACT_KEY.test(key) && typeof value === 'string') {
+    return `[redacted:len=${value.length}]`;
+  }
+  return value;
+}
+
 function formatData(data: Record<string, unknown>): string {
   const parts: string[] = [];
   for (const [k, v] of Object.entries(data)) {
-    parts.push(`${KEY_COLOR}${k}${RESET}=${k === 'err' ? formatErr(v) : JSON.stringify(v)}`);
+    if (k === 'err') {
+      parts.push(`${KEY_COLOR}${k}${RESET}=${formatErr(v)}`);
+    } else if (REDACT_KEY.test(k) && typeof v === 'string') {
+      parts.push(`${KEY_COLOR}${k}${RESET}="[redacted:len=${v.length}]"`);
+    } else {
+      parts.push(`${KEY_COLOR}${k}${RESET}=${JSON.stringify(v, redactReplacer)}`);
+    }
   }
   return parts.length ? ' ' + parts.join(' ') : '';
 }
@@ -59,6 +76,11 @@ process.on('uncaughtException', (err) => {
   process.exit(1);
 });
 
+// Symmetric with uncaughtException so a missed `.catch()` on a fire-and-forget
+// promise gets the same systemd-restart treatment instead of leaking a dangling
+// rejection nobody observes. The codebase relies on `void`/`.catch` discipline
+// elsewhere — make a violation loud rather than silent.
 process.on('unhandledRejection', (reason) => {
-  log.error('Unhandled rejection', { err: reason });
+  log.fatal('Unhandled rejection', { err: reason });
+  process.exit(1);
 });

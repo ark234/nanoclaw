@@ -101,15 +101,20 @@ export function insertMessage(
      */
     trigger?: 0 | 1;
   },
-): void {
-  db.prepare(
-    `INSERT INTO messages_in (id, seq, kind, timestamp, status, platform_id, channel_type, thread_id, content, process_after, recurrence, series_id, trigger)
+): boolean {
+  // Idempotent: channel adapters can redeliver the same message.id (Telegram
+  // does this on retry). Returns true if a new row was written, false if the
+  // id collided and the insert was a no-op. Callers that care can skip
+  // downstream side effects on duplicates.
+  const result = db.prepare(
+    `INSERT OR IGNORE INTO messages_in (id, seq, kind, timestamp, status, platform_id, channel_type, thread_id, content, process_after, recurrence, series_id, trigger)
      VALUES (@id, @seq, @kind, @timestamp, 'pending', @platformId, @channelType, @threadId, @content, @processAfter, @recurrence, @id, @trigger)`,
   ).run({
     ...message,
     trigger: message.trigger ?? 1,
     seq: nextEvenSeq(db),
   });
+  return result.changes === 1;
 }
 
 export function countDueMessages(db: Database.Database): number {

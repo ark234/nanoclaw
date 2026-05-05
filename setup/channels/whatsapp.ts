@@ -33,6 +33,7 @@ import * as p from '@clack/prompts';
 import k from 'kleur';
 
 import * as setupLog from '../logs.js';
+import { copySecretEnvFile, writeSecretEnvFile } from '../env-utils.js';
 import { brightSelect } from '../lib/bright-select.js';
 import { getLaunchdLabel, getSystemdUnit } from '../../src/install-slug.js';
 import {
@@ -446,12 +447,12 @@ function writeAssistantHasOwnNumber(): void {
     if (contents.length > 0 && !contents.endsWith('\n')) contents += '\n';
     contents += 'ASSISTANT_HAS_OWN_NUMBER=true\n';
   }
-  fs.writeFileSync(envPath, contents);
+  writeSecretEnvFile(envPath, contents);
 
   // Container reads from data/env/env.
   const containerEnvDir = path.join(process.cwd(), 'data', 'env');
   fs.mkdirSync(containerEnvDir, { recursive: true });
-  fs.copyFileSync(envPath, path.join(containerEnvDir, 'env'));
+  copySecretEnvFile(envPath, path.join(containerEnvDir, 'env'));
 }
 
 async function resolveAgentName(): Promise<string> {

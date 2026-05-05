@@ -20,11 +20,11 @@ src/container-runner.ts               container/agent-runner/
     ├── data/env/env ──────────────> /workspace/env-dir/env
     ├── groups/{folder} ───────────> /workspace/group
     ├── data/ipc/{folder} ────────> /workspace/ipc
-    ├── data/sessions/{folder}/.claude/ ──> /home/node/.claude/ (isolated per-group)
+    ├── data/sessions/{folder}/.claude/ ──> /agent-home/.claude/ (isolated per-group)
     └── (main only) project root ──> /workspace/project
 ```
 
-**Important:** The container runs as user `node` with `HOME=/home/node`. Session files must be mounted to `/home/node/.claude/` (not `/root/.claude/`) for session resumption to work.
+**Important:** The container runs as user `node` with `HOME=/agent-home`. Session files must be mounted to `/agent-home/.claude/` (not `/root/.claude/`) for session resumption to work.
 
 ## Log Locations
 
@@ -144,29 +144,29 @@ All of `/workspace/` and `/app/` should be owned by `node`.
 
 If sessions aren't being resumed (new session ID every time), or Claude Code exits with code 1 when resuming:
 
-**Root cause:** The SDK looks for sessions at `$HOME/.claude/projects/`. Inside the container, `HOME=/home/node`, so it looks at `/home/node/.claude/projects/`.
+**Root cause:** The SDK looks for sessions at `$HOME/.claude/projects/`. Inside the container, `HOME=/agent-home`, so it looks at `/agent-home/.claude/projects/`.
 
 **Check the mount path:**
 ```bash
-# In container-runner.ts, verify mount is to /home/node/.claude/, NOT /root/.claude/
+# In container-runner.ts, verify mount is to /agent-home/.claude/, NOT /root/.claude/
 grep -A3 "Claude sessions" src/container-runner.ts
 ```
 
 **Verify sessions are accessible:**
 ```bash
 docker run --rm --entrypoint /bin/bash \
-  -v ~/.claude:/home/node/.claude \
+  -v ~/.claude:/agent-home/.claude \
   nanoclaw-agent:latest -c '
 echo "HOME=$HOME"
 ls -la $HOME/.claude/projects/ 2>&1 | head -5
 '
 ```
 
-**Fix:** Ensure `container-runner.ts` mounts to `/home/node/.claude/`:
+**Fix:** Ensure `container-runner.ts` mounts to `/agent-home/.claude/`:
 ```typescript
 mounts.push({
   hostPath: claudeDir,
-  containerPath: '/home/node/.claude',  // NOT /root/.claude
+  containerPath: '/agent-home/.claude',  // NOT /root/.claude
   readonly: false
 });
 ```
@@ -266,8 +266,8 @@ Claude sessions are stored per-group in `data/sessions/{group}/.claude/` for sec
 
 **Critical:** The mount path must match the container user's HOME directory:
 - Container user: `node`
-- Container HOME: `/home/node`
-- Mount target: `/home/node/.claude/` (NOT `/root/.claude/`)
+- Container HOME: `/agent-home`
+- Mount target: `/agent-home/.claude/` (NOT `/root/.claude/`)
 
 To clear sessions:
 
@@ -335,7 +335,7 @@ echo -e "\n4. Container image exists?"
 echo '{}' | docker run -i --entrypoint /bin/echo nanoclaw-agent:latest "OK" 2>/dev/null || echo "MISSING - run ./container/build.sh"
 
 echo -e "\n5. Session mount path correct?"
-grep -q "/home/node/.claude" src/container-runner.ts 2>/dev/null && echo "OK" || echo "WRONG - should mount to /home/node/.claude/, not /root/.claude/"
+grep -q "/agent-home/.claude" src/container-runner.ts 2>/dev/null && echo "OK" || echo "WRONG - should mount to /agent-home/.claude/, not /root/.claude/"
 
 echo -e "\n6. Groups directory?"
 ls -la groups/ 2>/dev/null || echo "MISSING - run setup"

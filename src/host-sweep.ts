@@ -50,7 +50,12 @@ const SWEEP_INTERVAL_MS = 60_000;
 // Absolute idle ceiling for a running container. If the heartbeat file hasn't
 // been touched in this long, the container is either stuck or doing genuinely
 // nothing — kill and restart on the next inbound.
-export const ABSOLUTE_CEILING_MS = 30 * 60 * 1000;
+//
+// Lowered from 30→10 min because the morning/evening report recurrence task
+// can hang indefinitely on un-timeout'd fetch() calls (Gemini TTS, Telegram
+// upload). 30 min of silence per hang was too long; 10 min keeps the symptom
+// bounded while still allowing legitimately slow operations.
+export const ABSOLUTE_CEILING_MS = 10 * 60 * 1000;
 // Stuck tolerance window applied per 'processing' claim — "did we see any
 // signs of life since this message was claimed?"
 export const CLAIM_STUCK_MS = 60 * 1000;

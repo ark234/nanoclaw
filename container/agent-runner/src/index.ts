@@ -18,7 +18,7 @@
  *     global/           ← shared global memory (RO)
  *   /app/src/           ← shared agent-runner source (RO)
  *   /app/skills/        ← shared skills (RO)
- *   /home/node/.claude/ ← Claude SDK state + skill symlinks (RW)
+ *   /agent-home/.claude/ ← Claude SDK state + skill symlinks (RW; HOME=/agent-home)
  */
 
 import fs from 'fs';

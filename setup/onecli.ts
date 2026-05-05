@@ -17,6 +17,7 @@ import os from 'os';
 import path from 'path';
 
 import { log } from '../src/log.js';
+import { writeSecretEnvFile } from './env-utils.js';
 import { emitStatus } from './status.js';
 
 const LOCAL_BIN = path.join(os.homedir(), '.local', 'bin');
@@ -94,7 +95,7 @@ function writeEnvOnecliUrl(url: string): void {
   } else {
     content = content.trimEnd() + (content ? '\n' : '') + `ONECLI_URL=${url}\n`;
   }
-  fs.writeFileSync(envFile, content);
+  writeSecretEnvFile(envFile, content);
 }
 
 // Last-known-good CLI release. Used only if BOTH the upstream installer

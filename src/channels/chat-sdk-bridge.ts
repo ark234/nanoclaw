@@ -564,6 +564,7 @@ async function handleForwardedEvent(
         await fetch(`https://discord.com/api/v10/interactions/${interactionId}/${interactionToken}/callback`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
+          signal: AbortSignal.timeout(10_000),
           body: JSON.stringify({
             type: 7, // UPDATE_MESSAGE — acknowledge + update in one call
             data: {

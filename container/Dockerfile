@@ -22,6 +22,7 @@ ARG INSTALL_CJK_FONTS=false
 ARG CLAUDE_CODE_VERSION=2.1.116
 ARG AGENT_BROWSER_VERSION=latest
 ARG VERCEL_VERSION=latest
+ARG OPENCODE_VERSION=1.4.17
 ARG BUN_VERSION=1.3.12
 
 # ---- System dependencies -----------------------------------------------------
@@ -104,14 +105,26 @@ RUN --mount=type=cache,target=/root/.cache/pnpm \
 RUN --mount=type=cache,target=/root/.cache/pnpm \
     pnpm install -g "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}"
 
+RUN --mount=type=cache,target=/root/.cache/pnpm \
+    pnpm install -g "opencode-ai@${OPENCODE_VERSION}"
+
 # ---- Entrypoint --------------------------------------------------------------
 COPY entrypoint.sh /app/entrypoint.sh
 RUN chmod +x /app/entrypoint.sh
 
 # ---- Workspace + permissions -------------------------------------------------
+# Agent runtime $HOME. The container is started with `--user <hostUid>:<hostGid>`
+# so the running uid varies per host user; sticky-world-writable lets any
+# mapped uid create dotfile/cache dirs (Bun's ~/.bun, etc.). Container is
+# `--rm` so anything written here that isn't a bind mount is ephemeral.
+#
+# /home/node is intentionally left at the base-image default (755, owned by
+# node:node) — it's no longer the agent's HOME, so a compromised agent
+# process can't tamper with the node-owned dotfiles (.bashrc, .profile, …)
+# that ship in the image, nor seed new ones in that directory.
 RUN mkdir -p /workspace/group /workspace/extra && \
     chown -R node:node /workspace && \
-    chmod 777 /home/node
+    mkdir -p /agent-home && chmod 1777 /agent-home
 
 USER node
 WORKDIR /workspace/group

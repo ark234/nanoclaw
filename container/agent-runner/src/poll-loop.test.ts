@@ -4,6 +4,7 @@ import { initTestSessionDb, closeSessionDb, getInboundDb, getOutboundDb } from '
 import { getPendingMessages, markCompleted } from './db/messages-in.js';
 import { getUndeliveredMessages } from './db/messages-out.js';
 import { formatMessages, extractRouting } from './formatter.js';
+import { pumpFollowUps } from './poll-loop.js';
 import { MockProvider } from './providers/mock.js';
 
 beforeEach(() => {
@@ -189,6 +190,86 @@ describe('mock provider', () => {
     expect(results).toHaveLength(2);
     expect(results[0].text).toBe('Re: First');
     expect(results[1].text).toBe('Re: Second');
+  });
+});
+
+describe('pumpFollowUps (active-query gate)', () => {
+  function insertTask(id: string, scriptBody: string) {
+    insertMessage(id, 'task', { prompt: 'do the thing', script: scriptBody });
+  }
+
+  it('gates a task whose script returns wakeAgent:false — does NOT push it into the active query', async () => {
+    insertTask('t-quiet', `echo '{"wakeAgent": false, "data": []}'`);
+
+    const pushes: string[] = [];
+    const provider = new MockProvider({}, () => 'ack');
+    const query = provider.query({ prompt: 'initial', cwd: '/tmp' });
+    const origPush = query.push.bind(query);
+    query.push = (p: string) => { pushes.push(p); origPush(p); };
+
+    const result = await pumpFollowUps(query);
+    query.end();
+
+    expect(result.pushed).toBe(0);
+    expect(result.gated).toEqual(['t-quiet']);
+    expect(pushes).toHaveLength(0);
+
+    // Gated task is marked completed, not left in processing.
+    expect(getPendingMessages().find((m) => m.id === 't-quiet')).toBeUndefined();
+  });
+
+  it('pushes a task whose script returns wakeAgent:true', async () => {
+    insertTask('t-loud', `echo '{"wakeAgent": true, "data": {"hit": 1}}'`);
+
+    const pushes: string[] = [];
+    const provider = new MockProvider({}, () => 'ack');
+    const query = provider.query({ prompt: 'initial', cwd: '/tmp' });
+    const origPush = query.push.bind(query);
+    query.push = (p: string) => { pushes.push(p); origPush(p); };
+
+    const result = await pumpFollowUps(query);
+    query.end();
+
+    expect(result.pushed).toBe(1);
+    expect(result.gated).toEqual([]);
+    expect(pushes).toHaveLength(1);
+    expect(pushes[0]).toContain('[SCHEDULED TASK]');
+  });
+
+  it('pushes non-task messages unchanged (chat is never gated)', async () => {
+    insertMessage('c-1', 'chat', { sender: 'Ark', text: 'hi' });
+
+    const pushes: string[] = [];
+    const provider = new MockProvider({}, () => 'ack');
+    const query = provider.query({ prompt: 'initial', cwd: '/tmp' });
+    const origPush = query.push.bind(query);
+    query.push = (p: string) => { pushes.push(p); origPush(p); };
+
+    const result = await pumpFollowUps(query);
+    query.end();
+
+    expect(result.pushed).toBe(1);
+    expect(pushes).toHaveLength(1);
+    expect(pushes[0]).toContain('hi');
+  });
+
+  it('mixed batch: gated task is dropped, chat survives', async () => {
+    insertTask('t-quiet', `echo '{"wakeAgent": false, "data": []}'`);
+    insertMessage('c-1', 'chat', { sender: 'Ark', text: 'parallel chat' });
+
+    const pushes: string[] = [];
+    const provider = new MockProvider({}, () => 'ack');
+    const query = provider.query({ prompt: 'initial', cwd: '/tmp' });
+    const origPush = query.push.bind(query);
+    query.push = (p: string) => { pushes.push(p); origPush(p); };
+
+    const result = await pumpFollowUps(query);
+    query.end();
+
+    expect(result.pushed).toBe(1);
+    expect(result.gated).toEqual(['t-quiet']);
+    expect(pushes[0]).toContain('parallel chat');
+    expect(pushes[0]).not.toContain('[SCHEDULED TASK]');
   });
 });
 
