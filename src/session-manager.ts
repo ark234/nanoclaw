@@ -263,7 +263,11 @@ function extractAttachmentFiles(
       // length and replace anything that isn't a sane filename char so the
       // upstream Chat SDK can't smuggle weirdness through.
       const rawName = (att.name as string) || `attachment-${Date.now()}`;
-      const safeName = path.basename(rawName).replace(/[^A-Za-z0-9._-]/g, '_').slice(0, 200) || `attachment-${Date.now()}`;
+      const safeName =
+        path
+          .basename(rawName)
+          .replace(/[^A-Za-z0-9._-]/g, '_')
+          .slice(0, 200) || `attachment-${Date.now()}`;
       const filePath = path.join(inboxDir, safeName);
       fs.writeFileSync(filePath, Buffer.from(att.data as string, 'base64'));
       att.localPath = `inbox/${messageId}/${safeName}`;

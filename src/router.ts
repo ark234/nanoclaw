@@ -500,11 +500,7 @@ async function deliverToAgent(
  *      time, so a true redelivery (same getUpdates retry) keeps the same
  *      timestamp and still dedupes correctly.
  */
-function messageIdForAgent(
-  baseId: string | undefined,
-  agentGroupId: string,
-  timestamp: string | undefined,
-): string {
+function messageIdForAgent(baseId: string | undefined, agentGroupId: string, timestamp: string | undefined): string {
   const id = baseId && baseId.length > 0 ? baseId : generateId();
   const ts = timestamp ?? '';
   return `${id}:${ts}:${agentGroupId}`;

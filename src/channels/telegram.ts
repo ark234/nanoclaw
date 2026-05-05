@@ -132,10 +132,7 @@ async function sendPairingConfirmation(token: string, platformId: string): Promi
   }
 }
 
-function createPairingInterceptor(
-  hostOnInbound: ChannelSetup['onInbound'],
-  token: string,
-): ChannelSetup['onInbound'] {
+function createPairingInterceptor(hostOnInbound: ChannelSetup['onInbound'], token: string): ChannelSetup['onInbound'] {
   return async (platformId, threadId, message) => {
     try {
       const botUsername = await getBotUsername(token);
