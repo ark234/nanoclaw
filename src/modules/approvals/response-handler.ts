@@ -78,11 +78,13 @@ async function handleRegisteredApproval(
     // Claim the response so the dispatcher doesn't keep retrying, but do
     // nothing else. Leave the pending_approvals row in place — a real
     // approver can still click and resolve it.
+    // Log only enough to triage; do NOT dump the eligible-approver list
+    // (would let a persistent forged-click attacker enumerate admin/owner
+    // identities by scraping logs).
     log.warn('Approval click rejected — clicker is not an eligible approver', {
       approvalId: approval.approval_id,
       action: approval.action,
       clickerId,
-      eligible: pickApprover(session.agent_group_id),
     });
     return;
   }
