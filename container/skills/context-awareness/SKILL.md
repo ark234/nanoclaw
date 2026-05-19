@@ -16,22 +16,17 @@ description: Know your context window limits and manage them proactively. Check 
 
 When your session hits 165k tokens, Claude Code auto-compacts and sends you a message: "Context compacted (X tokens compacted)." After compaction, the conversation history is summarised and context resets — you keep working but lose verbatim history.
 
-## Check your current session size
+## Where session state lives
 
-```bash
-# Find your active session transcript and count tokens (rough: ~4 chars per token)
-SESSION_FILE=$(ls -t ~/.claude/projects/*/session-*.jsonl 2>/dev/null | head -1)
-if [ -n "$SESSION_FILE" ]; then
-  CHARS=$(wc -c < "$SESSION_FILE")
-  ESTIMATED_TOKENS=$((CHARS / 4))
-  echo "Session file: $SESSION_FILE"
-  echo "Estimated tokens used: ~$ESTIMATED_TOKENS / 165,000 before auto-compact"
-else
-  echo "No session file found"
-fi
-```
+You're running inside a NanoClaw container. The host's Claude Code session
+transcripts (`~/.claude/projects/*/session-*.jsonl`) don't exist here — sessions
+are in `/workspace/inbound.db` (host writes, you read) + `/workspace/outbound.db`
+(you write, host reads). There's no transcript-file size to grep against.
 
-This is an estimate (characters ÷ 4). Treat it as directional, not exact.
+Estimate your own context use by what you've been doing this turn: large file
+reads, long search results, and big diffs are the dominant consumers. Bash
+commands' outputs count too. When you've been reading a lot, assume you're
+closer to the limit than not.
 
 ## When to act proactively
 
