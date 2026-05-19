@@ -16,6 +16,7 @@ import fs from 'fs';
 import path from 'path';
 
 import { log } from '../src/log.js';
+import { copySecretEnvFile, writeSecretEnvFile } from './env-utils.js';
 import { emitStatus } from './status.js';
 
 export async function run(args: string[]): Promise<void> {
@@ -56,14 +57,14 @@ export async function run(args: string[]): Promise<void> {
     content = content + sep + newLine + '\n';
   }
 
-  fs.writeFileSync(envFile, content);
+  writeSecretEnvFile(envFile, content);
   log.info('Updated .env', { key, existed });
 
   let synced = false;
   if (syncContainer) {
     const dataEnvDir = path.join(projectRoot, 'data', 'env');
     fs.mkdirSync(dataEnvDir, { recursive: true });
-    fs.copyFileSync(envFile, path.join(dataEnvDir, 'env'));
+    copySecretEnvFile(envFile, path.join(dataEnvDir, 'env'));
     synced = true;
     log.info('Synced .env to container mount', { path: 'data/env/env' });
   }

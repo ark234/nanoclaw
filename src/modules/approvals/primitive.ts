@@ -21,6 +21,8 @@
  * exposing just user-roles/user-dms) is more churn than it's worth. Revisit
  * if either module becomes genuinely optional (see REFACTOR_PLAN open q #3).
  */
+import { randomBytes } from 'node:crypto';
+
 import { normalizeOptions, type RawOption } from '../../channels/ask-question.js';
 import { getMessagingGroup } from '../../db/messaging-groups.js';
 import { createPendingApproval, getSession } from '../../db/sessions.js';
@@ -180,7 +182,13 @@ export async function requestApproval(opts: RequestApprovalOptions): Promise<voi
     return;
   }
 
-  const approvalId = `appr-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  // The approvalId becomes the row's `request_id` which flows into the
+  // approval card's callback_data as the question id. Anyone who can submit
+  // a callback with this id triggers `handleApprovalsResponse` → the
+  // `isAuthorizedClicker` check is the load-bearing defense, but make the
+  // id itself unguessable too (128-bit CSPRNG) so a hypothetical bypass
+  // of the auth check doesn't fall back on a 30-bit Math.random() secret.
+  const approvalId = `appr-${randomBytes(16).toString('base64url')}`;
   const normalizedOptions = normalizeOptions(APPROVAL_OPTIONS);
   createPendingApproval({
     approval_id: approvalId,
